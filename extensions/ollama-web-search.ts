@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
@@ -23,7 +26,14 @@ type OllamaWebFetchResponse = {
 	links?: string[];
 };
 
-const OLLAMA_WEB_BASE_URL = (process.env.OLLAMA_WEB_BASE_URL ?? "https://ollama.com").replace(/\/$/, "");
+type OllamaWebSearchConfig = {
+	apiKey?: string;
+	baseUrl?: string;
+};
+
+type PiSettingsShape = {
+	ollamaWebSearch?: OllamaWebSearchConfig;
+};
 
 function truncateForContext(text: string): string {
 	const truncation = truncateHead(text, {
@@ -38,17 +48,54 @@ function truncateForContext(text: string): string {
 	)} of ${formatSize(truncation.totalBytes)}).]`;
 }
 
-async function ollamaRequest<T>(endpoint: "/api/web_search" | "/api/web_fetch", payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
-	const apiKey = process.env.OLLAMA_API_KEY;
+function readSettingsFile(path: string): PiSettingsShape {
+	if (!existsSync(path)) return {};
+
+	try {
+		const raw = readFileSync(path, "utf8");
+		const parsed = JSON.parse(raw) as PiSettingsShape;
+		return parsed ?? {};
+	} catch {
+		return {};
+	}
+}
+
+function resolveConfig(cwd: string): Required<OllamaWebSearchConfig> {
+	const globalPath = join(homedir(), ".pi", "agent", "settings.json");
+	const projectPath = join(cwd, ".pi", "settings.json");
+
+	const globalSettings = readSettingsFile(globalPath).ollamaWebSearch ?? {};
+	const projectSettings = readSettingsFile(projectPath).ollamaWebSearch ?? {};
+
+	const apiKey =
+		projectSettings.apiKey ?? globalSettings.apiKey ?? process.env.OLLAMA_API_KEY ?? "";
+	const baseUrl = (
+		projectSettings.baseUrl ??
+		globalSettings.baseUrl ??
+		process.env.OLLAMA_WEB_BASE_URL ??
+		"https://ollama.com"
+	).replace(/\/$/, "");
+
 	if (!apiKey) {
-		throw new Error("OLLAMA_API_KEY is not set. Generate a key at https://ollama.com/settings/keys and export it first.");
+		throw new Error(
+			"Missing Ollama API key. Set ollamaWebSearch.apiKey in .pi/settings.json or ~/.pi/agent/settings.json, or export OLLAMA_API_KEY.",
+		);
 	}
 
-	const response = await fetch(`${OLLAMA_WEB_BASE_URL}${endpoint}`, {
+	return { apiKey, baseUrl };
+}
+
+async function ollamaRequest<T>(
+	endpoint: "/api/web_search" | "/api/web_fetch",
+	payload: Record<string, unknown>,
+	config: Required<OllamaWebSearchConfig>,
+	signal?: AbortSignal,
+): Promise<T> {
+	const response = await fetch(`${config.baseUrl}${endpoint}`, {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
-			authorization: `Bearer ${apiKey}`,
+			authorization: `Bearer ${config.apiKey}`,
 		},
 		body: JSON.stringify(payload),
 		signal,
@@ -86,7 +133,7 @@ export default function (pi: ExtensionAPI) {
 		name: "ollama_web_search",
 		label: "Ollama Web Search",
 		description:
-			"Search the web via Ollama's web_search API. Requires OLLAMA_API_KEY. Returns up to 10 results with title, URL, and snippet.",
+			"Search the web via Ollama's web_search API. Configure credentials via ollamaWebSearch.apiKey in pi settings (or OLLAMA_API_KEY). Returns up to 10 results.",
 		parameters: Type.Object({
 			query: Type.String({ description: "Search query" }),
 			max_results: Type.Optional(
@@ -97,13 +144,15 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, signal) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const config = resolveConfig(ctx.cwd);
 			const data = await ollamaRequest<OllamaWebSearchResponse>(
 				"/api/web_search",
 				{
 					query: params.query,
 					...(params.max_results ? { max_results: params.max_results } : {}),
 				},
+				config,
 				signal,
 			);
 
@@ -122,12 +171,13 @@ export default function (pi: ExtensionAPI) {
 		name: "ollama_web_fetch",
 		label: "Ollama Web Fetch",
 		description:
-			"Fetch a single webpage via Ollama's web_fetch API. Requires OLLAMA_API_KEY. Returns page title, main content, and discovered links.",
+			"Fetch a webpage via Ollama's web_fetch API. Configure credentials via ollamaWebSearch.apiKey in pi settings (or OLLAMA_API_KEY).",
 		parameters: Type.Object({
 			url: Type.String({ description: "Absolute URL to fetch" }),
 		}),
-		async execute(_toolCallId, params, signal) {
-			const data = await ollamaRequest<OllamaWebFetchResponse>("/api/web_fetch", { url: params.url }, signal);
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const config = resolveConfig(ctx.cwd);
+			const data = await ollamaRequest<OllamaWebFetchResponse>("/api/web_fetch", { url: params.url }, config, signal);
 
 			const title = data.title ?? "(no title)";
 			const links = Array.isArray(data.links) ? data.links : [];
