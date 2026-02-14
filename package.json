@@ -1,9 +1,13 @@
 {
   "name": "pi-ollama-web-search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "pi extension adding Ollama web_search and web_fetch tools",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
   }
 }
