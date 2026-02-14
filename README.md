@@ -15,13 +15,19 @@ Default API host is `https://ollama.com`.
 
 ## Installation
 
-### Option A: install from GitHub (recommended)
+### Option A: install from npm (recommended)
+
+```bash
+pi install npx:@mariozechner/pi-ollama-web-search -l
+```
+
+### Option B: install from GitHub
 
 ```bash
 pi install git:github.com/mcollina/pi-ollama-web-search -l
 ```
 
-### Option B: clone and install locally
+### Option C: clone and install locally
 
 ```bash
 git clone git@github.com:mcollina/pi-ollama-web-search.git
